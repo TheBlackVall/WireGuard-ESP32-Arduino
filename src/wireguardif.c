@@ -48,8 +48,8 @@
 #include "wireguard.h"
 #include "crypto.h"
 #include "esp_log.h"
-#include "tcpip_adapter.h"
-
+//#include "tcpip_adapter.h"
+#include "esp_netif.h" // ##CHANGED 
 #include "esp32-hal-log.h"
 
 #define WIREGUARDIF_TIMER_MSECS 400
@@ -913,105 +913,105 @@ void wireguardif_shutdown(struct netif *netif) {
 }
 
 err_t wireguardif_init(struct netif *netif) {
-	err_t result;
-	struct wireguardif_init_data *init_data;
-	struct wireguard_device *device;
-	struct udp_pcb *udp;
-	uint8_t private_key[WIREGUARD_PRIVATE_KEY_LEN];
-	size_t private_key_len = sizeof(private_key);
+    err_t result;
+    struct wireguardif_init_data *init_data;
+    struct wireguard_device *device;
+    struct udp_pcb *udp;
+    uint8_t private_key[WIREGUARD_PRIVATE_KEY_LEN];
+    size_t private_key_len = sizeof(private_key);
 
-	struct netif* underlying_netif;
-	tcpip_adapter_get_netif(TCPIP_ADAPTER_IF_STA, &underlying_netif);
-	log_i(TAG "underlying_netif = %p", underlying_netif);
+    esp_netif_t *wifi_sta_netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");  // ## CHANGED
+    log_i(TAG "underlying_netif = %p", wifi_sta_netif);  // ## CHANGED
 
-	LWIP_ASSERT("netif != NULL", (netif != NULL));
-	LWIP_ASSERT("state != NULL", (netif->state != NULL));
+    LWIP_ASSERT("netif != NULL", (netif != NULL));
+    LWIP_ASSERT("state != NULL", (netif->state != NULL));
 
-	// We need to initialise the wireguard module
-	wireguard_init();
-	log_i(TAG "wireguard module initialized.");
+    // We need to initialise the wireguard module
+    wireguard_init();
+    log_i(TAG "wireguard module initialized.");
 
-	if (netif && netif->state) {
+    if (netif && netif->state) {
 
-		// The init data is passed into the netif_add call as the 'state' - we will replace this with our private state data
-		init_data = (struct wireguardif_init_data *)netif->state;
+        // The init data is passed into the netif_add call as the 'state' - we will replace this with our private state data
+        init_data = (struct wireguardif_init_data *)netif->state;
 
-		// Clear out and set if function is successful
-		netif->state = NULL;
+        // Clear out and set if function is successful
+        netif->state = NULL;
 
-		if (wireguard_base64_decode(init_data->private_key, private_key, &private_key_len)
-				&& (private_key_len == WIREGUARD_PRIVATE_KEY_LEN)) {
+        if (wireguard_base64_decode(init_data->private_key, private_key, &private_key_len)
+                && (private_key_len == WIREGUARD_PRIVATE_KEY_LEN)) {
 
-			udp = udp_new();
+            udp = udp_new();
 
-			if (udp) {
-				result = udp_bind(udp, IP_ADDR_ANY, init_data->listen_port); // Note this listens on all interfaces! Really just want the passed netif
-				if (result == ERR_OK) {
-					device = (struct wireguard_device *)mem_calloc(1, sizeof(struct wireguard_device));
-					if (device) {
-						device->netif = netif;
-						device->underlying_netif = underlying_netif;
-						//udp_bind_netif(udp, underlying_netif);
+            if (udp) {
+                result = udp_bind(udp, IP_ADDR_ANY, init_data->listen_port); // Note this listens on all interfaces! Really just want the passed netif
+                if (result == ERR_OK) {
+                    device = (struct wireguard_device *)mem_calloc(1, sizeof(struct wireguard_device));
+                    if (device) {
+                        device->netif = netif;
+                        device->underlying_netif = wifi_sta_netif;  // ## CHANGED
+                        //udp_bind_netif(udp, wifi_sta_netif);  // Uncomment to bind to the specific netif ## CHANGED
 
-						device->udp_pcb = udp;
-						log_d(TAG "start device initialization");
-						// Per-wireguard netif/device setup
-						uint32_t t1 = wireguard_sys_now();
-						if (wireguard_device_init(device, private_key)) {
-							uint32_t t2 = wireguard_sys_now();
-							log_d(TAG "Device init took %ums\r\n", (t2-t1));
+                        device->udp_pcb = udp;
+                        log_d(TAG "start device initialization");
+                        // Per-wireguard netif/device setup
+                        uint32_t t1 = wireguard_sys_now();
+                        if (wireguard_device_init(device, private_key)) {
+                            uint32_t t2 = wireguard_sys_now();
+                            log_d(TAG "Device init took %ums\r\n", (t2-t1));
 
 #if LWIP_CHECKSUM_CTRL_PER_NETIF
-							NETIF_SET_CHECKSUM_CTRL(netif, NETIF_CHECKSUM_ENABLE_ALL);
+                            NETIF_SET_CHECKSUM_CTRL(netif, NETIF_CHECKSUM_ENABLE_ALL);
 #endif
-							netif->state = device;
-							netif->name[0] = 'w';
-							netif->name[1] = 'g';
-							netif->output = wireguardif_output;
-							netif->linkoutput = NULL;
-							netif->hwaddr_len = 0;
-							netif->mtu = WIREGUARDIF_MTU;
-							// We set up no state flags here - caller should set them
-							// NETIF_FLAG_LINK_UP is automatically set/cleared when at least one peer is connected
-							netif->flags = 0;
+                            netif->state = device;
+                            netif->name[0] = 'w';
+                            netif->name[1] = 'g';
+                            netif->output = wireguardif_output;
+                            netif->linkoutput = NULL;
+                            netif->hwaddr_len = 0;
+                            netif->mtu = WIREGUARDIF_MTU;
+                            // We set up no state flags here - caller should set them
+                            // NETIF_FLAG_LINK_UP is automatically set/cleared when at least one peer is connected
+                            netif->flags = 0;
 
-							udp_recv(udp, wireguardif_network_rx, device);
+                            udp_recv(udp, wireguardif_network_rx, device);
 
-							// Start a periodic timer for this wireguard device
-							sys_timeout(WIREGUARDIF_TIMER_MSECS, wireguardif_tmr, device);
+                            // Start a periodic timer for this wireguard device
+                            sys_timeout(WIREGUARDIF_TIMER_MSECS, wireguardif_tmr, device);
 
-							result = ERR_OK;
-						} else {
-							log_e(TAG "failed to initialize WireGuard device.");
-							mem_free(device);
-							device = NULL;
-							udp_remove(udp);
-							result = ERR_ARG;
-						}
-					} else {
-						log_e(TAG "failed to allocate device context.");
-						udp_remove(udp);
-						result = ERR_MEM;
-					}
-				} else {
-					log_e(TAG "failed to bind UDP err=%d", result);
-					udp_remove(udp);
-				}
+                            result = ERR_OK;
+                        } else {
+                            log_e(TAG "failed to initialize WireGuard device.");
+                            mem_free(device);
+                            device = NULL;
+                            udp_remove(udp);
+                            result = ERR_ARG;
+                        }
+                    } else {
+                        log_e(TAG "failed to allocate device context.");
+                        udp_remove(udp);
+                        result = ERR_MEM;
+                    }
+                } else {
+                    log_e(TAG "failed to bind UDP err=%d", result);
+                    udp_remove(udp);
+                }
 
-			} else {
-				log_e(TAG "failed to allocate UDP");
-				result = ERR_MEM;
-			}
-		} else {
-			log_e(TAG "invalid init_data private key");
-			result = ERR_ARG;
-		}
-	} else {
-		log_e(TAG "netif or state is NULL: netif=%p, netif.state:%p", netif, netif ? netif->state : NULL);
-		result = ERR_ARG;
-	}
-	return result;
+            } else {
+                log_e(TAG "failed to allocate UDP");
+                result = ERR_MEM;
+            }
+        } else {
+            log_e(TAG "invalid init_data private key");
+            result = ERR_ARG;
+        }
+    } else {
+        log_e(TAG "netif or state is NULL: netif=%p, netif.state:%p", netif, netif ? netif->state : NULL);
+        result = ERR_ARG;
+    }
+    return result;
 }
+
 
 void wireguardif_peer_init(struct wireguardif_peer *peer) {
 	LWIP_ASSERT("peer != NULL", (peer != NULL));
