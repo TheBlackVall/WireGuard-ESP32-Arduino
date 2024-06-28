@@ -4,10 +4,6 @@ This is an implementation of the [WireGuard&reg;](https://www.wireguard.com/) fo
 
 Almost all of this code is based on the [WireGuard Implementation for lwIP](https://github.com/smartalock/wireguard-lwip), but some potion of the code is adjusted to build with ESP32 Arduino.
 
-Updated `wireguardif.c` to use `esp_netif.h` instead of `tcpip_adapter.h`, and `wireguardif_init` function was modified to reflect the library change.
-
-All code aside from `wireguardif.c` is untouched, and example sketches should work as with the parent fork. 
-
 ## How to use 
 
 1. Include `WireGuard-ESP32.h` at the early part of the sketch.
